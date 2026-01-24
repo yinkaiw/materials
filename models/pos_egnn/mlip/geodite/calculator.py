@@ -1,4 +1,5 @@
 import logging
+import warnings
 from typing import Any
 
 import numpy as np
@@ -6,6 +7,8 @@ import torch
 from ase.calculators.calculator import Calculator, all_changes
 from ase.data import atomic_numbers
 from torch_geometric.data.data import Data
+import requests
+from pathlib import Path
 
 from .model import GeoditeModule
 
@@ -20,6 +23,7 @@ class GeoditeCalculator(Calculator):
         fidelity: str = "MPtrj",
         precision: str = "32",
         compute_stress: bool = True,
+        download_path = ".",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -31,7 +35,33 @@ class GeoditeCalculator(Calculator):
         self.fidelity = f"{fidelity}_"
         self.compute_stress = compute_stress
 
-        model = GeoditeModule.load_from_checkpoint(checkpoint, strict=False, map_location=device, weights_only=True)
+        if checkpoint == "MP":
+            url = "https://huggingface.co/ibm-research/materials.geodite/resolve/main/Geodite-MP.ckpt"
+
+            download_path = Path(download_path)  # change this to your folder
+            download_path.mkdir(parents=True, exist_ok=True)
+
+            file_path = download_path / "Geodite-MP.ckpt"
+
+            if file_path.exists():
+                print(f"File already exists: {file_path}")
+            else:
+                print(f"Downloading {url} to {file_path}...")
+                response = requests.get(url, stream=True)
+                response.raise_for_status()
+
+                with open(file_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+
+                print(f"Download complete: {file_path}")
+
+            checkpoint = file_path
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model = GeoditeModule.load_from_checkpoint(checkpoint, strict=False, map_location=device, weights_only=True)
         model.SnapshotDecoder.set_context_state(self.fidelity)
         try:
             self.model = torch.compile(model, mode="default")
